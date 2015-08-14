@@ -1,40 +1,8 @@
 // requires: windows.h
 
-typedef enum {
-	ArgProg,
-	ArgBool,
-	ArgValue
-} ArgType;
-
-typedef struct {
-	ArgType type;
-	char *key;
-	union {
-		struct {
-			char *value;
-			int len;
-		};
-		int isset;
-	};
-} Arg;
-
-static void args_make(Arg *arg, ArgType type, char *key)
-{
-	arg->type = type;
-	arg->key = key;
-	if(type == ArgBool) {
-		arg->isset = 0;
-	} else if(type == ArgValue || type == ArgProg) {
-		arg->value = NULL;
-		arg->len = 0;
-	}
-}
-
 /*
 	Parses the command line passed to the program, matches keys
 	and puts the parsed key value pairs into $args.
-	Use an Arg with key NULL to get the program (argv[0]).
-	The function does not check for invalid parameters.
 
 	sample usage:
 		Arg prog, regex, base, ignorecase;
@@ -42,8 +10,8 @@ static void args_make(Arg *arg, ArgType type, char *key)
 		args_make(&prog, ArgProg, NULL);
 		args_make(&search, ArgValue, "-s");
 		args_make(&base, ArgValue, "-b");
-		args_make(&ignorecase, ArgValue, "-ic");
-		args_get(args, ARR_LEN(args));
+		args_make(&ignorecase, ArgBool, "-ic");
+		args_get(args, ARR_LEN(args), GetCommandLine());
 		if(prog.value) {
 			prog.value has program path and name
 			prog.len the length of prog.value
@@ -76,32 +44,63 @@ static void args_make(Arg *arg, ArgType type, char *key)
 		-> base.len = 23
 		-> ignorecase.isset = 0
 */
-static void args_get(Arg **args, int count)
+
+typedef enum {
+	ArgProg,
+	ArgBool,
+	ArgValue
+} ArgType;
+
+typedef struct {
+	ArgType type;
+	char *key;
+	union {
+		struct {
+			char *value;
+			int len;
+		};
+		int isset;
+	};
+} Arg;
+
+static void args_make(Arg *arg, ArgType type, char *key)
 {
-	static char cmdline[8*1024];
+	arg->type = type;
+	arg->key = key;
+	if(type == ArgBool) {
+		arg->isset = 0;
+	} else if(type == ArgValue || type == ArgProg) {
+		arg->value = NULL;
+		arg->len = 0;
+	}
+}
+
+static void args_get(Arg **args, int count, const char *cmdline)
+{
+	static char cmd[8*1024];
 	int i, o, n, ignorespace;
 	Arg *key;
 
-	lstrcpy(cmdline, GetCommandLine());
+	lstrcpy(cmd, cmdline);
 
 	/* parse program name */
 	o = 0;
-	while(cmdline[o] && cmdline[o] != ' ') {
+	while(cmd[o] && cmd[o] != ' ') {
 		o++;
 	}
-	cmdline[o] = 0;
+	cmd[o] = 0;
 	for(i=0; i<count; i++) {
 		if(args[i]->type == ArgProg) {
-			args[i]->value = &cmdline[0];
+			args[i]->value = &cmd[0];
 			args[i]->len = o;
 			break;
 		}
 	}
 	o++;
-	if(!cmdline[o]) {
+	if(!cmd[o]) {
 		return;
 	}
-	while(cmdline[o] == ' ' || cmdline[o] == '\t') {
+	while(cmd[o] == ' ' || cmd[o] == '\t') {
 		o++;
 	}
 
@@ -109,41 +108,40 @@ static void args_get(Arg **args, int count)
 	key = NULL;
 	n = o;
 	ignorespace = 0;
-	while(cmdline[o]) {
-		if(cmdline[o] == '"') {
+	while(cmd[o]) {
+		if(cmd[o] == '"') {
 			ignorespace = !ignorespace;
 			o++;
-		} else if(cmdline[o] == ' ' && !ignorespace) {
-			cmdline[o] = 0;
+		} else if(cmd[o] == ' ' && !ignorespace) {
+			cmd[o] = 0;
 			if(key) {
-				key->value = &cmdline[n];
+				key->value = &cmd[n];
 				key->len = o-n;
 				if(key->value[0] == '"') {
 					key->value++;
 					key->len--;
 				}
 				if(key->value[key->len-1] == '"') {
-					key->value[key->len-1] = 0;
-					key->len--;
+					key->value[--key->len] = 0;
 				}
 				key = NULL;
 			} else {
 				for(i=0; i<count; i++) {
-					if(lstrcmp(args[i]->key, &cmdline[n]) == 0) {
-						key = args[i];
+					if(lstrcmp(args[i]->key, &cmd[n]) == 0) {
+						if(args[i]->type == ArgBool) {
+							args[i]->isset = 1;
+						} else {
+							key = args[i];
+						}
 						break;
 					}
 				}
-				if(key && key->type == ArgBool) {
-					key->isset = 1;
-					key = NULL;
-				}
 			}
 			o++;
-			if(!cmdline[o]) {
+			if(!cmd[o]) {
 				break;
 			}
-			while(cmdline[o] == ' ' || cmdline[o] == '\t') {
+			while(cmd[o] == ' ' || cmd[o] == '\t') {
 				o++;
 			}
 			n = o;
@@ -154,25 +152,23 @@ static void args_get(Arg **args, int count)
 
 	/* the last value, if any */
 	if(key) {
-		key->value = &cmdline[n];
+		key->value = &cmd[n];
 		key->len = o-n;
 		if(key->value[0] == '"') {
 			key->value++;
 			key->len--;
 		}
 		if(key->value[key->len-1] == '"') {
-			key->value[key->len-1] = 0;
-			key->len--;
+			key->value[--key->len] = 0;
 		}
 	} else {
 		for(i=0; i<count; i++) {
-			if(lstrcmp(args[i]->key, &cmdline[n]) == 0) {
-				key = args[i];
+			if(lstrcmp(args[i]->key, &cmd[n]) == 0) {
+				if(args[i]->type == ArgBool) {
+					args[i]->isset = 1;
+				}
 				break;
 			}
-		}
-		if(key && key->type == ArgBool) {
-			key->isset = 1;
 		}
 	}
 }
