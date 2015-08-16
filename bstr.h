@@ -65,3 +65,21 @@ static int endswith(const char *s, char c)
 	s--;
 	return *s == c;
 }
+
+/*
+	stou is like atoi but unsigned
+*/
+static unsigned stou(const char *s)
+{
+	char *p = s;
+	unsigned r = 0; 
+	while(*p) { 
+		if(*p < '0' || *p > '9') { 
+			return 0;
+		} 
+		r *= 10; 
+		r += *p - '0'; 
+		p++;
+	} 
+	return r; 
+}
